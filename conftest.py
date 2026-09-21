@@ -4,8 +4,10 @@ import random
 import time
 from config import *
 from faker import Faker
-
+import re
 from models.user_dto import User
+from models.contact_dto import Contact
+from dataclasses import asdict
 
 fake = Faker()
 
@@ -18,8 +20,13 @@ def login_url():
     return BASE_URL + API_VERSION + LOGIN_URL
 
 @pytest.fixture(scope="session")
+def add_contact_url():
+    return BASE_URL + API_VERSION + ADD_CONTACT_URL
+
+@pytest.fixture(scope="session")
 def session():
     s = requests.Session()
+    s.headers.update({"Content-Type": "application/json"})
     yield s
     s.close()
 
@@ -34,4 +41,72 @@ def random_user():
         lower_case=True,
     )+"$"
     return User(username=username, password=password)
+
+@pytest.fixture(scope="function")
+def registered_user(session, registration_url, random_user):
+    user_data = {
+        "username": random_user.username,
+        "password": random_user.password,
+    }
+    response_reg = session.post(registration_url, json=user_data)
+    if response_reg.status_code == 200:
+        return random_user
+    return User(TEST_EMAIL, TEST_PASSWORD)
+
+@pytest.fixture(scope="function")
+def auth_token(session, registration_url, random_user):
+    user_data = {
+        "username": random_user.username,
+        "password": random_user.password,
+    }
+    response = session.post(registration_url, json=user_data)
+    assert response.status_code == 200, (
+        f"Failed registeration {response.status_code} {response.text}"
+    )
+    return response.json()["token"]
+
+@pytest.fixture(scope="function")
+def auth_header(auth_token):
+    return {"Authorization": auth_token}
+
+@pytest.fixture(scope="function")
+def random_contact():
+    return Contact(
+        name=fake.name(),
+        lastName=fake.last_name(),
+        email=fake.email(),
+        phone=fake.numerify("#" * random.randint(10, 15)),
+        address=fake.address()[:50],
+        description=fake.text(max_nb_chars=200),
+    )
+@pytest.fixture(scope="function")
+def create_contact(session, add_contact_url, auth_header, random_contact):
+    responce_1 = session.post(add_contact_url,
+                            json=asdict(random_contact),
+                            headers=auth_header)
+
+    contact_id = responce_1.json()["message"][23:]
+    return contact_id
+
+@pytest.fixture(scope="function")
+def create_contact(session, add_contact_url, auth_header, random_contact):
+    response = session.post(add_contact_url,
+                            json=asdict(random_contact),
+                            headers=auth_header)
+    message = response.json()["message"]
+    match = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                     message)
+    assert match, f"Id not found --> {message}"
+    contact_id = match.group()
+    return contact_id
+
+@pytest.fixture(scope="function")
+def create_contact_return_contact(session, add_contact_url, auth_header, random_contact):
+    response = session.post(add_contact_url,
+                            json=asdict(random_contact),
+                            headers=auth_header)
+    contact_id = response.json()["message"][23:]
+    contact = asdict(random_contact)
+    contact["id"] = contact_id
+    return contact
 
